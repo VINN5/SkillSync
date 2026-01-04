@@ -1,0 +1,76 @@
+# Python / Backend
+backend/venv/
+backend/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-delete-this-directory.txt
+instance/
+.webassets-cache
+*.log
+
+# Environment variables (CRITICAL - never commit secrets!)
+.env
+.env.local
+.env.production
+
+# Node.js / Frontend (Vite + React)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Build outputs
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Dependency directories
+pip-delete-this-directory.txt
+
+# Testing / Coverage
+htmlcov/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Jupyter notebooks
+.ipynb_checkpoints
+
+# Mac files
+.Spotlight-V100
+.Trashes
+
+# Windows files
+ehthumbs.db
+Desktop.ini
+
+# Miscellaneous
+*.tmp
+*.bak
+*.swp
+*~.nib
