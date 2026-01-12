@@ -14,10 +14,16 @@ app = FastAPI(
     redoc_url=None
 )
 
-
+# ────────────────────────────────────────────────
+# CORS — this is the critical part that was blocking frontend requests
+# ────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://*.onrender.com", "*"],  
+    allow_origins=[
+        "http://localhost:5173",                    # local dev
+        "*"                                         # allow everything (temporary — safe for demo)
+        # "https://your-frontend-url.onrender.com", # ← replace with your exact frontend URL later
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,7 +55,7 @@ async def oauth2_redirect():
         swagger_css_url="/static/swagger-ui.css",
     )
 
-
+# Force CORS headers on error responses (extra safety)
 @app.exception_handler(400)
 async def bad_request_handler(request: Request, exc):
     return JSONResponse(
@@ -89,7 +95,7 @@ async def internal_error_handler(request: Request, exc):
         },
     )
 
-# MongoDB events
+# MongoDB connection events
 @app.on_event("startup")
 async def startup_event():
     await connect_to_mongo()
@@ -98,6 +104,7 @@ async def startup_event():
 async def shutdown_event():
     await close_mongo_connection()
 
+# Basic endpoints
 @app.get("/")
 async def root():
     return {"message": "Welcome to SkillSync API 🚀", "database": "connected"}
