@@ -5,6 +5,9 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from database import connect_to_mongo, close_mongo_connection
 from routers.auth import router as auth_router
+from routers.admin import router as admin_router
+from routers.client import router as client_router
+from routers.contractor import router as contractor_router
 
 app = FastAPI(
     title="SkillSync API",
@@ -21,8 +24,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",                    # local dev
+        "https://skillsync-1-ywfs.onrender.com",   # production frontend
         "*"                                         # allow everything (temporary — safe for demo)
-        # "https://your-frontend-url.onrender.com", # ← replace with your exact frontend URL later
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -32,7 +35,13 @@ app.add_middleware(
 # Static files for local Swagger UI
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
-app.include_router(auth_router)
+# ────────────────────────────────────────────────
+# Include all routers
+# ────────────────────────────────────────────────
+app.include_router(auth_router)        # /auth/login, /auth/register
+app.include_router(admin_router)       # /admin/* (admin only)
+app.include_router(client_router)      # /client/* (client only)
+app.include_router(contractor_router)  # /contractor/* (contractor only)
 
 # Custom local Swagger UI
 @app.get("/docs", include_in_schema=False)
@@ -74,6 +83,19 @@ async def unauthorized_handler(request: Request, exc):
     return JSONResponse(
         status_code=401,
         content={"detail": exc.detail if hasattr(exc, "detail") else "Unauthorized"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
+@app.exception_handler(403)
+async def forbidden_handler(request: Request, exc):
+    return JSONResponse(
+        status_code=403,
+        content={"detail": exc.detail if hasattr(exc, "detail") else "Forbidden"},
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Credentials": "true",
