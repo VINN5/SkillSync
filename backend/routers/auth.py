@@ -1,58 +1,186 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
-from datetime import datetime  # <-- Added import
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, EmailStr
+from passlib.context import CryptContext
+from jose import jwt
+from datetime import datetime, timedelta
 from database import db
-from models.user import UserCreate, UserResponse
-from utils.auth import get_password_hash, verify_password, create_access_token
+import os
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-@router.post("/register", response_model=UserResponse)
-async def register(user: UserCreate):
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# JWT Configuration - MUST match the one in client.py
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+
+# ────────────────────────────────────────────────
+# Pydantic Models
+# ────────────────────────────────────────────────
+
+class UserRegister(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str  # "client", "contractor", or "admin"
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "John Doe",
+                "email": "john@example.com",
+                "password": "securepassword123",
+                "role": "client"
+            }
+        }
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "john@example.com",
+                "password": "securepassword123"
+            }
+        }
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    role: str
+    user_id: str
+
+
+# ────────────────────────────────────────────────
+# Helper Functions
+# ────────────────────────────────────────────────
+
+def hash_password(password: str) -> str:
+    """Hash a password"""
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its hash"""
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    """Create JWT access token"""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+# ────────────────────────────────────────────────
+# Authentication Endpoints
+# ────────────────────────────────────────────────
+
+@router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+async def register(user: UserRegister):
+    """Register a new user"""
+    
+    # Validate role
+    if user.role not in ["client", "contractor", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role. Must be 'client', 'contractor', or 'admin'"
+        )
+    
     # Check if user already exists
-    existing_user = await db.users.find_one({"email": user.email.lower()})
+    existing_user = await db.users.find_one({"email": user.email})
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
-
-    # Hash the password
-    hashed_password = get_password_hash(user.password)
-
-    # Prepare user document with created_at timestamp
-    user_dict = {
-        "email": user.email.lower(),
-        "full_name": user.full_name,
+    
+    # Create new user
+    user_data = {
+        "name": user.name,
+        "email": user.email,
+        "password": hash_password(user.password),
         "role": user.role,
-        "hashed_password": hashed_password,
-        "created_at": datetime.utcnow()  # <-- Now added here
+        "createdAt": datetime.utcnow(),
+        "updatedAt": datetime.utcnow()
     }
+    
+    # Add role-specific fields
+    if user.role == "contractor":
+        user_data.update({
+            "skills": [],
+            "rating": 0.0,
+            "hourlyRate": 0.0,
+            "completedProjects": 0,
+            "bio": ""
+        })
+    
+    result = await db.users.insert_one(user_data)
+    user_id = str(result.inserted_id)
+    
+    # Create access token
+    access_token = create_access_token(
+        data={"sub": user_id, "role": user.role}
+    )
+    
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        role=user.role,
+        user_id=user_id
+    )
 
-    # Insert into database
-    result = await db.users.insert_one(user_dict)
 
-    # Fetch the created user
-    created_user = await db.users.find_one({"_id": result.inserted_id})
-
-    # Return response (created_at now exists)
-    return {
-        "id": str(created_user["_id"]),
-        "email": created_user["email"],
-        "full_name": created_user["full_name"],
-        "role": created_user["role"],
-        "created_at": created_user["created_at"]
-    }
-
-@router.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = await db.users.find_one({"email": form_data.username.lower()})
-    if not user or not verify_password(form_data.password, user["hashed_password"]):
+@router.post("/login", response_model=Token)
+async def login(credentials: UserLogin):
+    """Login user and return JWT token"""
+    
+    # Find user by email
+    user = await db.users.find_one({"email": credentials.email})
+    
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
+    
+    # Verify password
+    if not verify_password(credentials.password, user["password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
+    
+    # Create access token
+    user_id = str(user["_id"])
+    access_token = create_access_token(
+        data={"sub": user_id, "role": user["role"]}
+    )
+    
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        role=user["role"],
+        user_id=user_id
+    )
 
-    access_token = create_access_token(data={"sub": str(user["_id"]), "role": user["role"]})
 
-    return {"access_token": access_token, "token_type": "bearer", "role": user["role"]}
+@router.get("/me")
+async def get_current_user_info():
+    """Get current user information (requires authentication)"""
+    # This would normally require authentication middleware
+    # For now, it's a placeholder
+    return {"message": "This endpoint requires authentication"}

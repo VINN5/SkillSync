@@ -1,42 +1,31 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
 from bson import ObjectId
 from jose import JWTError, jwt
-import database
+import os
+
+from database import db  # Assuming this exports the Motor database instance
 
 router = APIRouter(prefix="/client", tags=["Client"])
 security = HTTPBearer()
 
-# JWT Configuration (should match your auth.py)
-SECRET_KEY = "your-secret-key-here"  # Use the same secret as in auth.py
+# Load from environment (must match auth.py)
+SECRET_KEY = os.getenv("JWT_SECRET")
 ALGORITHM = "HS256"
+
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET environment variable is not set")
 
 # ────────────────────────────────────────────────
 # Pydantic Models
 # ────────────────────────────────────────────────
 
-class PyObjectId(ObjectId):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
-        return ObjectId(v)
-
-    @classmethod
-    def __modify_schema__(cls, field_schema):
-        field_schema.update(type="string")
-
-
 class ProjectCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
-    description: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=10)
     budget: float = Field(..., gt=0)
     skillsRequired: List[str] = Field(..., min_items=1)
 
@@ -44,9 +33,9 @@ class ProjectCreate(BaseModel):
         schema_extra = {
             "example": {
                 "title": "E-commerce Website Development",
-                "description": "Need a full-stack developer to build a modern e-commerce platform",
-                "budget": 5000,
-                "skillsRequired": ["React", "Node.js", "MongoDB"]
+                "description": "Need a full-stack developer to build a modern e-commerce platform with payment integration",
+                "budget": 5000.0,
+                "skillsRequired": ["React", "Node.js", "MongoDB", "Tailwind CSS"]
             }
         }
 
@@ -56,14 +45,7 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     budget: Optional[float] = None
     skillsRequired: Optional[List[str]] = None
-    status: Optional[str] = None
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "status": "in_progress"
-            }
-        }
+    status: Optional[str] = None  # e.g. "open", "in_progress", "completed"
 
 
 class ProjectResponse(BaseModel):
@@ -77,43 +59,15 @@ class ProjectResponse(BaseModel):
     proposals: int
     clientId: str
 
-    class Config:
-        schema_extra = {
-            "example": {
-                "id": "507f1f77bcf86cd799439011",
-                "title": "E-commerce Website Development",
-                "description": "Need a full-stack developer...",
-                "budget": 5000,
-                "status": "open",
-                "skillsRequired": ["React", "Node.js", "MongoDB"],
-                "postedDate": "2024-02-01",
-                "proposals": 12,
-                "clientId": "507f1f77bcf86cd799439012"
-            }
-        }
-
 
 class ContractorPublicProfile(BaseModel):
     id: str
-    name: str
+    full_name: str
     skills: List[str]
     rating: float
     hourlyRate: float
     completedProjects: int
     bio: Optional[str] = None
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "id": "507f1f77bcf86cd799439013",
-                "name": "Sarah Johnson",
-                "skills": ["React", "Node.js", "TypeScript"],
-                "rating": 4.9,
-                "hourlyRate": 85,
-                "completedProjects": 47,
-                "bio": "Full-stack developer with 5+ years experience"
-            }
-        }
 
 
 class ProposalResponse(BaseModel):
@@ -127,33 +81,10 @@ class ProposalResponse(BaseModel):
     status: str
     submittedDate: str
 
-    class Config:
-        schema_extra = {
-            "example": {
-                "id": "507f1f77bcf86cd799439014",
-                "projectId": "507f1f77bcf86cd799439011",
-                "contractorId": "507f1f77bcf86cd799439013",
-                "contractorName": "Sarah Johnson",
-                "coverLetter": "I'd love to work on this project...",
-                "proposedBudget": 4800,
-                "estimatedDuration": "4 weeks",
-                "status": "pending",
-                "submittedDate": "2024-02-02"
-            }
-        }
-
 
 class MessageCreate(BaseModel):
     recipientId: str
-    content: str
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "recipientId": "507f1f77bcf86cd799439013",
-                "content": "Hi, I'm interested in discussing the project..."
-            }
-        }
+    content: str = Field(..., min_length=1, max_length=2000)
 
 
 class MessageResponse(BaseModel):
@@ -165,19 +96,6 @@ class MessageResponse(BaseModel):
     timestamp: str
     read: bool
 
-    class Config:
-        schema_extra = {
-            "example": {
-                "id": "507f1f77bcf86cd799439015",
-                "senderId": "507f1f77bcf86cd799439012",
-                "senderName": "John Doe",
-                "recipientId": "507f1f77bcf86cd799439013",
-                "content": "Hi, I'm interested in discussing...",
-                "timestamp": "2024-02-02T10:30:00",
-                "read": False
-            }
-        }
-
 
 class DashboardStats(BaseModel):
     activeProjects: int
@@ -185,23 +103,12 @@ class DashboardStats(BaseModel):
     completedProjects: int
     totalBudget: float
 
-    class Config:
-        schema_extra = {
-            "example": {
-                "activeProjects": 3,
-                "totalProposals": 25,
-                "completedProjects": 5,
-                "totalBudget": 15000
-            }
-        }
-
 
 # ────────────────────────────────────────────────
 # Authentication Dependency
 # ────────────────────────────────────────────────
 
 async def get_current_client(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify JWT token and ensure user is a client"""
     try:
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -220,7 +127,8 @@ async def get_current_client(credentials: HTTPAuthorizationCredentials = Depends
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
 
@@ -233,9 +141,6 @@ async def create_project(
     project: ProjectCreate,
     client_id: str = Depends(get_current_client)
 ):
-    """Create a new project"""
-    db = database.database
-    
     project_data = {
         "title": project.title,
         "description": project.description,
@@ -251,48 +156,45 @@ async def create_project(
     
     result = await db.projects.insert_one(project_data)
     
-    created_project = await db.projects.find_one({"_id": result.inserted_id})
+    created = await db.projects.find_one({"_id": result.inserted_id})
     
     return ProjectResponse(
-        id=str(created_project["_id"]),
-        title=created_project["title"],
-        description=created_project["description"],
-        budget=created_project["budget"],
-        status=created_project["status"],
-        skillsRequired=created_project["skillsRequired"],
-        postedDate=created_project["postedDate"],
-        proposals=created_project["proposals"],
-        clientId=created_project["clientId"]
+        id=str(created["_id"]),
+        title=created["title"],
+        description=created["description"],
+        budget=created["budget"],
+        status=created["status"],
+        skillsRequired=created["skillsRequired"],
+        postedDate=created["postedDate"],
+        proposals=created.get("proposals", 0),
+        clientId=created["clientId"]
     )
 
 
 @router.get("/projects", response_model=List[ProjectResponse])
 async def get_client_projects(
     client_id: str = Depends(get_current_client),
-    status_filter: Optional[str] = None
+    status: Optional[str] = Query(None, description="Filter by status (open, in_progress, completed, etc.)")
 ):
-    """Get all projects for the current client"""
-    db = database.database
-    
     query = {"clientId": client_id}
-    if status_filter:
-        query["status"] = status_filter
+    if status:
+        query["status"] = status
     
     projects = await db.projects.find(query).sort("createdAt", -1).to_list(100)
     
     return [
         ProjectResponse(
-            id=str(project["_id"]),
-            title=project["title"],
-            description=project["description"],
-            budget=project["budget"],
-            status=project["status"],
-            skillsRequired=project["skillsRequired"],
-            postedDate=project["postedDate"],
-            proposals=project.get("proposals", 0),
-            clientId=project["clientId"]
+            id=str(p["_id"]),
+            title=p["title"],
+            description=p["description"],
+            budget=p["budget"],
+            status=p["status"],
+            skillsRequired=p["skillsRequired"],
+            postedDate=p["postedDate"],
+            proposals=p.get("proposals", 0),
+            clientId=p["clientId"]
         )
-        for project in projects
+        for p in projects
     ]
 
 
@@ -301,9 +203,6 @@ async def get_project(
     project_id: str,
     client_id: str = Depends(get_current_client)
 ):
-    """Get a specific project by ID"""
-    db = database.database
-    
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
     
@@ -313,7 +212,7 @@ async def get_project(
     })
     
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Project not found or not owned by you")
     
     return ProjectResponse(
         id=str(project["_id"]),
@@ -331,47 +230,41 @@ async def get_project(
 @router.put("/projects/{project_id}", response_model=ProjectResponse)
 async def update_project(
     project_id: str,
-    project_update: ProjectUpdate,
+    update_data: ProjectUpdate,
     client_id: str = Depends(get_current_client)
 ):
-    """Update a project"""
-    db = database.database
-    
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
     
-    # Check if project exists and belongs to client
-    existing_project = await db.projects.find_one({
+    project = await db.projects.find_one({
         "_id": ObjectId(project_id),
         "clientId": client_id
     })
     
-    if not existing_project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or not owned by you")
     
-    # Build update dictionary
-    update_data = {k: v for k, v in project_update.dict().items() if v is not None}
-    update_data["updatedAt"] = datetime.utcnow()
+    # Build update dict (only non-None fields)
+    update_fields = {k: v for k, v in update_data.dict().items() if v is not None}
+    if update_fields:
+        update_fields["updatedAt"] = datetime.utcnow()
+        await db.projects.update_one(
+            {"_id": ObjectId(project_id)},
+            {"$set": update_fields}
+        )
     
-    # Update project
-    await db.projects.update_one(
-        {"_id": ObjectId(project_id)},
-        {"$set": update_data}
-    )
-    
-    # Get updated project
-    updated_project = await db.projects.find_one({"_id": ObjectId(project_id)})
+    updated = await db.projects.find_one({"_id": ObjectId(project_id)})
     
     return ProjectResponse(
-        id=str(updated_project["_id"]),
-        title=updated_project["title"],
-        description=updated_project["description"],
-        budget=updated_project["budget"],
-        status=updated_project["status"],
-        skillsRequired=updated_project["skillsRequired"],
-        postedDate=updated_project["postedDate"],
-        proposals=updated_project.get("proposals", 0),
-        clientId=updated_project["clientId"]
+        id=str(updated["_id"]),
+        title=updated["title"],
+        description=updated["description"],
+        budget=updated["budget"],
+        status=updated["status"],
+        skillsRequired=updated["skillsRequired"],
+        postedDate=updated["postedDate"],
+        proposals=updated.get("proposals", 0),
+        clientId=updated["clientId"]
     )
 
 
@@ -380,9 +273,6 @@ async def delete_project(
     project_id: str,
     client_id: str = Depends(get_current_client)
 ):
-    """Delete a project"""
-    db = database.database
-    
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
     
@@ -392,9 +282,9 @@ async def delete_project(
     })
     
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Project not found or not owned by you")
     
-    # Also delete associated proposals
+    # Clean up related proposals
     await db.proposals.delete_many({"projectId": project_id})
     
     return None
@@ -409,40 +299,34 @@ async def get_project_proposals(
     project_id: str,
     client_id: str = Depends(get_current_client)
 ):
-    """Get all proposals for a specific project"""
-    db = database.database
-    
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
     
-    # Verify project belongs to client
     project = await db.projects.find_one({
         "_id": ObjectId(project_id),
         "clientId": client_id
     })
     
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Project not found or not owned by you")
     
-    # Get proposals
-    proposals = await db.proposals.find({"projectId": project_id}).to_list(100)
+    proposals = await db.proposals.find({"projectId": project_id}).sort("submittedDate", -1).to_list(50)
     
-    # Enrich with contractor names
     result = []
-    for proposal in proposals:
-        contractor = await db.users.find_one({"_id": ObjectId(proposal["contractorId"])})
-        contractor_name = contractor.get("name", "Unknown") if contractor else "Unknown"
+    for p in proposals:
+        contractor = await db.users.find_one({"_id": ObjectId(p["contractorId"])})
+        name = contractor.get("full_name", "Unknown") if contractor else "Unknown"
         
         result.append(ProposalResponse(
-            id=str(proposal["_id"]),
-            projectId=proposal["projectId"],
-            contractorId=proposal["contractorId"],
-            contractorName=contractor_name,
-            coverLetter=proposal["coverLetter"],
-            proposedBudget=proposal["proposedBudget"],
-            estimatedDuration=proposal["estimatedDuration"],
-            status=proposal["status"],
-            submittedDate=proposal["submittedDate"]
+            id=str(p["_id"]),
+            projectId=p["projectId"],
+            contractorId=p["contractorId"],
+            contractorName=name,
+            coverLetter=p["coverLetter"],
+            proposedBudget=p["proposedBudget"],
+            estimatedDuration=p["estimatedDuration"],
+            status=p["status"],
+            submittedDate=p["submittedDate"]
         ))
     
     return result
@@ -453,62 +337,56 @@ async def accept_proposal(
     proposal_id: str,
     client_id: str = Depends(get_current_client)
 ):
-    """Accept a proposal"""
-    db = database.database
-    
     if not ObjectId.is_valid(proposal_id):
         raise HTTPException(status_code=400, detail="Invalid proposal ID")
     
     proposal = await db.proposals.find_one({"_id": ObjectId(proposal_id)})
-    
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
     
-    # Verify the project belongs to the client
     project = await db.projects.find_one({
         "_id": ObjectId(proposal["projectId"]),
         "clientId": client_id
     })
-    
     if not project:
-        raise HTTPException(status_code=403, detail="Unauthorized")
+        raise HTTPException(status_code=403, detail="Unauthorized - project not owned by you")
     
-    # Update proposal status
+    if project["status"] != "open":
+        raise HTTPException(status_code=400, detail="Cannot accept proposal - project is no longer open")
+    
+    # Accept this proposal
     await db.proposals.update_one(
         {"_id": ObjectId(proposal_id)},
         {"$set": {"status": "accepted", "updatedAt": datetime.utcnow()}}
     )
     
-    # Update project status
+    # Update project
     await db.projects.update_one(
         {"_id": ObjectId(proposal["projectId"])},
         {"$set": {"status": "in_progress", "updatedAt": datetime.utcnow()}}
     )
     
-    # Reject other proposals for this project
+    # Reject all others
     await db.proposals.update_many(
-        {
-            "projectId": proposal["projectId"],
-            "_id": {"$ne": ObjectId(proposal_id)}
-        },
+        {"projectId": proposal["projectId"], "_id": {"$ne": ObjectId(proposal_id)}},
         {"$set": {"status": "rejected", "updatedAt": datetime.utcnow()}}
     )
     
-    # Get updated proposal with contractor name
-    updated_proposal = await db.proposals.find_one({"_id": ObjectId(proposal_id)})
-    contractor = await db.users.find_one({"_id": ObjectId(updated_proposal["contractorId"])})
-    contractor_name = contractor.get("name", "Unknown") if contractor else "Unknown"
+    # Return updated proposal
+    updated = await db.proposals.find_one({"_id": ObjectId(proposal_id)})
+    contractor = await db.users.find_one({"_id": ObjectId(updated["contractorId"])})
+    name = contractor.get("full_name", "Unknown") if contractor else "Unknown"
     
     return ProposalResponse(
-        id=str(updated_proposal["_id"]),
-        projectId=updated_proposal["projectId"],
-        contractorId=updated_proposal["contractorId"],
-        contractorName=contractor_name,
-        coverLetter=updated_proposal["coverLetter"],
-        proposedBudget=updated_proposal["proposedBudget"],
-        estimatedDuration=updated_proposal["estimatedDuration"],
-        status=updated_proposal["status"],
-        submittedDate=updated_proposal["submittedDate"]
+        id=str(updated["_id"]),
+        projectId=updated["projectId"],
+        contractorId=updated["contractorId"],
+        contractorName=name,
+        coverLetter=updated["coverLetter"],
+        proposedBudget=updated["proposedBudget"],
+        estimatedDuration=updated["estimatedDuration"],
+        status=updated["status"],
+        submittedDate=updated["submittedDate"]
     )
 
 
@@ -517,64 +395,53 @@ async def reject_proposal(
     proposal_id: str,
     client_id: str = Depends(get_current_client)
 ):
-    """Reject a proposal"""
-    db = database.database
-    
     if not ObjectId.is_valid(proposal_id):
         raise HTTPException(status_code=400, detail="Invalid proposal ID")
     
     proposal = await db.proposals.find_one({"_id": ObjectId(proposal_id)})
-    
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
     
-    # Verify the project belongs to the client
     project = await db.projects.find_one({
         "_id": ObjectId(proposal["projectId"]),
         "clientId": client_id
     })
-    
     if not project:
         raise HTTPException(status_code=403, detail="Unauthorized")
     
-    # Update proposal status
     await db.proposals.update_one(
         {"_id": ObjectId(proposal_id)},
         {"$set": {"status": "rejected", "updatedAt": datetime.utcnow()}}
     )
     
-    # Get updated proposal with contractor name
-    updated_proposal = await db.proposals.find_one({"_id": ObjectId(proposal_id)})
-    contractor = await db.users.find_one({"_id": ObjectId(updated_proposal["contractorId"])})
-    contractor_name = contractor.get("name", "Unknown") if contractor else "Unknown"
+    updated = await db.proposals.find_one({"_id": ObjectId(proposal_id)})
+    contractor = await db.users.find_one({"_id": ObjectId(updated["contractorId"])})
+    name = contractor.get("full_name", "Unknown") if contractor else "Unknown"
     
     return ProposalResponse(
-        id=str(updated_proposal["_id"]),
-        projectId=updated_proposal["projectId"],
-        contractorId=updated_proposal["contractorId"],
-        contractorName=contractor_name,
-        coverLetter=updated_proposal["coverLetter"],
-        proposedBudget=updated_proposal["proposedBudget"],
-        estimatedDuration=updated_proposal["estimatedDuration"],
-        status=updated_proposal["status"],
-        submittedDate=updated_proposal["submittedDate"]
+        id=str(updated["_id"]),
+        projectId=updated["projectId"],
+        contractorId=updated["contractorId"],
+        contractorName=name,
+        coverLetter=updated["coverLetter"],
+        proposedBudget=updated["proposedBudget"],
+        estimatedDuration=updated["estimatedDuration"],
+        status=updated["status"],
+        submittedDate=updated["submittedDate"]
     )
 
 
 # ────────────────────────────────────────────────
-# Contractor Browse Endpoints
+# Contractor Browse
 # ────────────────────────────────────────────────
 
 @router.get("/contractors", response_model=List[ContractorPublicProfile])
 async def browse_contractors(
     client_id: str = Depends(get_current_client),
-    skills: Optional[str] = None,
-    min_rating: Optional[float] = None,
-    max_rate: Optional[float] = None
+    skills: Optional[str] = Query(None),
+    min_rating: Optional[float] = Query(None, ge=0, le=5),
+    max_rate: Optional[float] = Query(None, ge=0)
 ):
-    """Browse available contractors with optional filters"""
-    db = database.database
-    
     query = {"role": "contractor"}
     
     if skills:
@@ -587,82 +454,47 @@ async def browse_contractors(
     if max_rate is not None:
         query["hourlyRate"] = {"$lte": max_rate}
     
-    contractors = await db.users.find(query).to_list(100)
+    contractors = await db.users.find(query).sort("rating", -1).to_list(50)
     
     return [
         ContractorPublicProfile(
-            id=str(contractor["_id"]),
-            name=contractor.get("name", "Unknown"),
-            skills=contractor.get("skills", []),
-            rating=contractor.get("rating", 0.0),
-            hourlyRate=contractor.get("hourlyRate", 0.0),
-            completedProjects=contractor.get("completedProjects", 0),
-            bio=contractor.get("bio")
+            id=str(c["_id"]),
+            full_name=c.get("full_name", "Unknown"),
+            skills=c.get("skills", []),
+            rating=c.get("rating", 0.0),
+            hourlyRate=c.get("hourlyRate", 0.0),
+            completedProjects=c.get("completedProjects", 0),
+            bio=c.get("bio")
         )
-        for contractor in contractors
+        for c in contractors
     ]
 
 
-@router.get("/contractors/{contractor_id}", response_model=ContractorPublicProfile)
-async def get_contractor_profile(
-    contractor_id: str,
-    client_id: str = Depends(get_current_client)
-):
-    """Get detailed contractor profile"""
-    db = database.database
-    
-    if not ObjectId.is_valid(contractor_id):
-        raise HTTPException(status_code=400, detail="Invalid contractor ID")
-    
-    contractor = await db.users.find_one({
-        "_id": ObjectId(contractor_id),
-        "role": "contractor"
-    })
-    
-    if not contractor:
-        raise HTTPException(status_code=404, detail="Contractor not found")
-    
-    return ContractorPublicProfile(
-        id=str(contractor["_id"]),
-        name=contractor.get("name", "Unknown"),
-        skills=contractor.get("skills", []),
-        rating=contractor.get("rating", 0.0),
-        hourlyRate=contractor.get("hourlyRate", 0.0),
-        completedProjects=contractor.get("completedProjects", 0),
-        bio=contractor.get("bio")
-    )
-
-
 # ────────────────────────────────────────────────
-# Dashboard Stats Endpoint
+# Dashboard Stats
 # ────────────────────────────────────────────────
 
 @router.get("/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats(client_id: str = Depends(get_current_client)):
-    """Get dashboard statistics for the client"""
-    db = database.database
-    
-    # Get all client projects
     projects = await db.projects.find({"clientId": client_id}).to_list(1000)
     
-    active_projects = sum(1 for p in projects if p["status"] in ["open", "in_progress"])
-    completed_projects = sum(1 for p in projects if p["status"] == "completed")
+    active = sum(1 for p in projects if p["status"] in ["open", "in_progress"])
+    completed = sum(1 for p in projects if p["status"] == "completed")
     total_budget = sum(p["budget"] for p in projects)
     
-    # Get total proposals across all projects
     project_ids = [str(p["_id"]) for p in projects]
     total_proposals = await db.proposals.count_documents({"projectId": {"$in": project_ids}})
     
     return DashboardStats(
-        activeProjects=active_projects,
+        activeProjects=active,
         totalProposals=total_proposals,
-        completedProjects=completed_projects,
+        completedProjects=completed,
         totalBudget=total_budget
     )
 
 
 # ────────────────────────────────────────────────
-# Messaging Endpoints
+# Messaging
 # ────────────────────────────────────────────────
 
 @router.post("/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
@@ -670,20 +502,15 @@ async def send_message(
     message: MessageCreate,
     client_id: str = Depends(get_current_client)
 ):
-    """Send a message to a contractor"""
-    db = database.database
-    
-    # Verify recipient exists
     recipient = await db.users.find_one({"_id": ObjectId(message.recipientId)})
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
     
-    # Get sender info
     sender = await db.users.find_one({"_id": ObjectId(client_id)})
     
-    message_data = {
+    msg_data = {
         "senderId": client_id,
-        "senderName": sender.get("name", "Unknown") if sender else "Unknown",
+        "senderName": sender.get("full_name", "Unknown") if sender else "Unknown",
         "recipientId": message.recipientId,
         "content": message.content,
         "timestamp": datetime.utcnow().isoformat(),
@@ -691,38 +518,33 @@ async def send_message(
         "createdAt": datetime.utcnow()
     }
     
-    result = await db.messages.insert_one(message_data)
-    created_message = await db.messages.find_one({"_id": result.inserted_id})
+    result = await db.messages.insert_one(msg_data)
+    created = await db.messages.find_one({"_id": result.inserted_id})
     
     return MessageResponse(
-        id=str(created_message["_id"]),
-        senderId=created_message["senderId"],
-        senderName=created_message["senderName"],
-        recipientId=created_message["recipientId"],
-        content=created_message["content"],
-        timestamp=created_message["timestamp"],
-        read=created_message["read"]
+        id=str(created["_id"]),
+        senderId=created["senderId"],
+        senderName=created["senderName"],
+        recipientId=created["recipientId"],
+        content=created["content"],
+        timestamp=created["timestamp"],
+        read=created["read"]
     )
 
 
 @router.get("/messages", response_model=List[MessageResponse])
 async def get_messages(
     client_id: str = Depends(get_current_client),
-    conversation_with: Optional[str] = None
+    with_user: Optional[str] = Query(None, description="Filter conversation with specific user")
 ):
-    """Get messages for the client"""
-    db = database.database
-    
-    if conversation_with:
-        # Get conversation with specific user
+    if with_user:
         query = {
             "$or": [
-                {"senderId": client_id, "recipientId": conversation_with},
-                {"senderId": conversation_with, "recipientId": client_id}
+                {"senderId": client_id, "recipientId": with_user},
+                {"senderId": with_user, "recipientId": client_id}
             ]
         }
     else:
-        # Get all messages
         query = {
             "$or": [
                 {"senderId": client_id},
@@ -734,46 +556,13 @@ async def get_messages(
     
     return [
         MessageResponse(
-            id=str(msg["_id"]),
-            senderId=msg["senderId"],
-            senderName=msg["senderName"],
-            recipientId=msg["recipientId"],
-            content=msg["content"],
-            timestamp=msg["timestamp"],
-            read=msg["read"]
+            id=str(m["_id"]),
+            senderId=m["senderId"],
+            senderName=m["senderName"],
+            recipientId=m["recipientId"],
+            content=m["content"],
+            timestamp=m["timestamp"],
+            read=m["read"]
         )
-        for msg in messages
+        for m in messages
     ]
-
-
-@router.put("/messages/{message_id}/read", response_model=MessageResponse)
-async def mark_message_read(
-    message_id: str,
-    client_id: str = Depends(get_current_client)
-):
-    """Mark a message as read"""
-    db = database.database
-    
-    if not ObjectId.is_valid(message_id):
-        raise HTTPException(status_code=400, detail="Invalid message ID")
-    
-    # Update only if client is the recipient
-    result = await db.messages.update_one(
-        {"_id": ObjectId(message_id), "recipientId": client_id},
-        {"$set": {"read": True}}
-    )
-    
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Message not found")
-    
-    updated_message = await db.messages.find_one({"_id": ObjectId(message_id)})
-    
-    return MessageResponse(
-        id=str(updated_message["_id"]),
-        senderId=updated_message["senderId"],
-        senderName=updated_message["senderName"],
-        recipientId=updated_message["recipientId"],
-        content=updated_message["content"],
-        timestamp=updated_message["timestamp"],
-        read=updated_message["read"]
-    )
