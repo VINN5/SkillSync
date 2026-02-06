@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from bson import ObjectId
 from jose import JWTError, jwt
-from database import get_database
+import database
 
 router = APIRouter(prefix="/client", tags=["Client"])
 security = HTTPBearer()
@@ -217,15 +217,10 @@ async def get_current_client(credentials: HTTPAuthorizationCredentials = Depends
         
         return user_id
     
-    except jwt.ExpiredSignatureError:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired"
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
+            detail="Invalid or expired token"
         )
 
 
@@ -239,7 +234,7 @@ async def create_project(
     client_id: str = Depends(get_current_client)
 ):
     """Create a new project"""
-    db = await get_database()
+    db = database.database
     
     project_data = {
         "title": project.title,
@@ -277,7 +272,7 @@ async def get_client_projects(
     status_filter: Optional[str] = None
 ):
     """Get all projects for the current client"""
-    db = await get_database()
+    db = database.database
     
     query = {"clientId": client_id}
     if status_filter:
@@ -307,7 +302,7 @@ async def get_project(
     client_id: str = Depends(get_current_client)
 ):
     """Get a specific project by ID"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
@@ -340,7 +335,7 @@ async def update_project(
     client_id: str = Depends(get_current_client)
 ):
     """Update a project"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
@@ -386,7 +381,7 @@ async def delete_project(
     client_id: str = Depends(get_current_client)
 ):
     """Delete a project"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
@@ -415,7 +410,7 @@ async def get_project_proposals(
     client_id: str = Depends(get_current_client)
 ):
     """Get all proposals for a specific project"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(project_id):
         raise HTTPException(status_code=400, detail="Invalid project ID")
@@ -459,7 +454,7 @@ async def accept_proposal(
     client_id: str = Depends(get_current_client)
 ):
     """Accept a proposal"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(proposal_id):
         raise HTTPException(status_code=400, detail="Invalid proposal ID")
@@ -523,7 +518,7 @@ async def reject_proposal(
     client_id: str = Depends(get_current_client)
 ):
     """Reject a proposal"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(proposal_id):
         raise HTTPException(status_code=400, detail="Invalid proposal ID")
@@ -578,7 +573,7 @@ async def browse_contractors(
     max_rate: Optional[float] = None
 ):
     """Browse available contractors with optional filters"""
-    db = await get_database()
+    db = database.database
     
     query = {"role": "contractor"}
     
@@ -614,7 +609,7 @@ async def get_contractor_profile(
     client_id: str = Depends(get_current_client)
 ):
     """Get detailed contractor profile"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(contractor_id):
         raise HTTPException(status_code=400, detail="Invalid contractor ID")
@@ -645,7 +640,7 @@ async def get_contractor_profile(
 @router.get("/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats(client_id: str = Depends(get_current_client)):
     """Get dashboard statistics for the client"""
-    db = await get_database()
+    db = database.database
     
     # Get all client projects
     projects = await db.projects.find({"clientId": client_id}).to_list(1000)
@@ -676,7 +671,7 @@ async def send_message(
     client_id: str = Depends(get_current_client)
 ):
     """Send a message to a contractor"""
-    db = await get_database()
+    db = database.database
     
     # Verify recipient exists
     recipient = await db.users.find_one({"_id": ObjectId(message.recipientId)})
@@ -716,7 +711,7 @@ async def get_messages(
     conversation_with: Optional[str] = None
 ):
     """Get messages for the client"""
-    db = await get_database()
+    db = database.database
     
     if conversation_with:
         # Get conversation with specific user
@@ -757,7 +752,7 @@ async def mark_message_read(
     client_id: str = Depends(get_current_client)
 ):
     """Mark a message as read"""
-    db = await get_database()
+    db = database.database
     
     if not ObjectId.is_valid(message_id):
         raise HTTPException(status_code=400, detail="Invalid message ID")
