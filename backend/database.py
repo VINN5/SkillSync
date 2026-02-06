@@ -11,11 +11,12 @@ DATABASE_NAME = os.getenv("DATABASE_NAME", "skillsync")
 
 client: AsyncIOMotorClient = None
 database = None
+db = None  # Alias for backward compatibility
 
 
 async def connect_to_mongo():
     """Connect to MongoDB on startup"""
-    global client, database
+    global client, database, db
     try:
         client = AsyncIOMotorClient(
             MONGO_URI,
@@ -26,6 +27,7 @@ async def connect_to_mongo():
         # Test connection
         await client.admin.command('ping')
         database = client[DATABASE_NAME]
+        db = database  # Create alias
         print(f"✅ Connected to MongoDB: {DATABASE_NAME}")
     except Exception as e:
         print(f"❌ Error connecting to MongoDB: {e}")
@@ -42,10 +44,4 @@ async def close_mongo_connection():
 
 async def get_database():
     """Get database instance"""
-    return database
-
-
-# Synchronous version for compatibility
-def get_db():
-    """Get database instance (sync)"""
     return database
