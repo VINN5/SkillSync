@@ -3,7 +3,7 @@ from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
-from database import db
+import database
 import os
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -94,6 +94,14 @@ async def register(user: UserRegister):
     """Register a new user"""
     
     try:
+        # Get database instance
+        db = database.db
+        if db is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
+            )
+        
         # Validate role
         if user.role not in ["client", "contractor", "admin"]:
             raise HTTPException(
@@ -159,6 +167,14 @@ async def login(credentials: UserLogin):
     """Login user and return JWT token"""
     
     try:
+        # Get database instance
+        db = database.db
+        if db is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
+            )
+        
         # Find user by email
         user = await db.users.find_one({"email": credentials.email})
         

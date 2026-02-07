@@ -29,6 +29,7 @@ async def connect_to_mongo():
         database = client[DATABASE_NAME]
         db = database  # Create alias
         print(f"✅ Connected to MongoDB: {DATABASE_NAME}")
+        print(f"✅ Database object created: {db is not None}")
     except Exception as e:
         print(f"❌ Error connecting to MongoDB: {e}")
         raise
@@ -42,6 +43,9 @@ async def close_mongo_connection():
         print("MongoDB connection closed")
 
 
-async def get_database():
-    """Get database instance"""
-    return database
+def get_db():
+    """Get database instance synchronously"""
+    global db
+    if db is None:
+        raise RuntimeError("Database not initialized. Call connect_to_mongo first.")
+    return db
