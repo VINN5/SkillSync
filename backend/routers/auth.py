@@ -285,6 +285,20 @@ async def delete_all_users():
         return {"error": str(e)}
 
 
+@router.get("/debug/clear-users")
+async def clear_all_users():
+    """Clear all users - USE WITH CAUTION - GET method for browser access"""
+    try:
+        db = database.db
+        if db is None:
+            return {"error": "Database not connected"}
+        
+        result = await db.users.delete_many({})
+        return {"success": True, "deleted": result.deleted_count, "message": f"Deleted {result.deleted_count} users"}
+    
+    except Exception as e:
+        return {"error": str(e)}
+
 @router.get("/me")
 async def get_current_user_info():
     """Get current user information (requires authentication)"""
