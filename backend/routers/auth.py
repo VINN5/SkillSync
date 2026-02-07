@@ -214,6 +214,49 @@ async def login(credentials: UserLogin):
         )
 
 
+@router.get("/debug/users")
+async def debug_users():
+    """Debug endpoint to check users - REMOVE IN PRODUCTION"""
+    try:
+        db = database.db
+        if db is None:
+            return {"error": "Database not connected"}
+        
+        users = await db.users.find({}).to_list(100)
+        
+        # Don't return passwords, just structure
+        result = []
+        for user in users:
+            result.append({
+                "id": str(user.get("_id")),
+                "name": user.get("name"),
+                "email": user.get("email"),
+                "role": user.get("role"),
+                "has_password": "password" in user,
+                "password_length": len(user.get("password", "")) if "password" in user else 0,
+                "fields": list(user.keys())
+            })
+        
+        return {"users": result, "count": len(result)}
+    
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.delete("/debug/delete-all-users")
+async def delete_all_users():
+    """Delete all users - USE WITH CAUTION"""
+    try:
+        db = database.db
+        if db is None:
+            return {"error": "Database not connected"}
+        
+        result = await db.users.delete_many({})
+        return {"deleted": result.deleted_count}
+    
+    except Exception as e:
+        return {"error": str(e)}
+
 @router.get("/me")
 async def get_current_user_info():
     """Get current user information (requires authentication)"""
