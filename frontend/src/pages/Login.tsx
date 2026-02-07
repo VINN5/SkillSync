@@ -15,9 +15,9 @@ export default function Login() {
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          username: formData.email,
+        headers: { 'Content-Type': 'application/json' },  // ← Changed to JSON
+        body: JSON.stringify({
+          email: formData.email,      // ← Changed to JSON format
           password: formData.password
         })
       })
@@ -27,7 +27,7 @@ export default function Login() {
       if (res.ok) {
         localStorage.setItem('token', data.access_token)
         setMessage('Welcome back!')
-        setTimeout(() => navigate('/dashboard'), 1500)  // ← Changed to /dashboard
+        setTimeout(() => navigate('/dashboard'), 1500)
       } else {
         setMessage(data.detail || 'Invalid credentials')
       }

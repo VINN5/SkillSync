@@ -6,7 +6,7 @@ export default function Register() {
   const initialRole = searchParams.get('role') as 'client' | 'contractor' || 'client'
 
   const [formData, setFormData] = useState({
-    full_name: '',
+    name: '',        // ← Changed from full_name to name
     email: '',
     password: '',
     role: initialRole
@@ -30,8 +30,10 @@ export default function Register() {
       const data = await res.json()
 
       if (res.ok) {
-        setMessage(`Success! Welcome, ${data.full_name}. Redirecting to login...`)
-        setTimeout(() => navigate('/login'), 2000)
+        // Store the token and redirect to dashboard immediately
+        localStorage.setItem('token', data.access_token)
+        setMessage(`Success! Welcome, ${formData.name}. Redirecting...`)
+        setTimeout(() => navigate('/dashboard'), 1500)
       } else {
         setMessage(data.detail || 'Registration failed')
       }
@@ -62,8 +64,8 @@ export default function Register() {
             placeholder="Full Name"
             required
             className="w-full px-6 py-4 bg-white/20 border border-white/30 rounded-xl text-white placeholder-white/60 focus:outline-none focus:ring-4 focus:ring-white/50"
-            value={formData.full_name}
-            onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           />
 
           <input
