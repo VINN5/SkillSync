@@ -11,7 +11,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# JWT Configuration - MUST match the one in client.py
+# JWT Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
@@ -25,7 +25,7 @@ class UserRegister(BaseModel):
     name: str
     email: EmailStr
     password: str
-    role: str  # "client", "contractor", or "admin"
+    role: str
 
     class Config:
         json_schema_extra = {
@@ -93,94 +93,112 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 async def register(user: UserRegister):
     """Register a new user"""
     
-    # Validate role
-    if user.role not in ["client", "contractor", "admin"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role. Must be 'client', 'contractor', or 'admin'"
+    try:
+        # Validate role
+        if user.role not in ["client", "contractor", "admin"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role. Must be 'client', 'contractor', or 'admin'"
+            )
+        
+        # Check if user already exists
+        existing_user = await db.users.find_one({"email": user.email})
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Create new user
+        user_data = {
+            "name": user.name,
+            "email": user.email,
+            "password": hash_password(user.password),
+            "role": user.role,
+            "createdAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow()
+        }
+        
+        # Add role-specific fields
+        if user.role == "contractor":
+            user_data.update({
+                "skills": [],
+                "rating": 0.0,
+                "hourlyRate": 0.0,
+                "completedProjects": 0,
+                "bio": ""
+            })
+        
+        result = await db.users.insert_one(user_data)
+        user_id = str(result.inserted_id)
+        
+        # Create access token
+        access_token = create_access_token(
+            data={"sub": user_id, "role": user.role}
+        )
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            role=user.role,
+            user_id=user_id
         )
     
-    # Check if user already exists
-    existing_user = await db.users.find_one({"email": user.email})
-    if existing_user:
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Registration error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {str(e)}"
         )
-    
-    # Create new user
-    user_data = {
-        "name": user.name,
-        "email": user.email,
-        "password": hash_password(user.password),
-        "role": user.role,
-        "createdAt": datetime.utcnow(),
-        "updatedAt": datetime.utcnow()
-    }
-    
-    # Add role-specific fields
-    if user.role == "contractor":
-        user_data.update({
-            "skills": [],
-            "rating": 0.0,
-            "hourlyRate": 0.0,
-            "completedProjects": 0,
-            "bio": ""
-        })
-    
-    result = await db.users.insert_one(user_data)
-    user_id = str(result.inserted_id)
-    
-    # Create access token
-    access_token = create_access_token(
-        data={"sub": user_id, "role": user.role}
-    )
-    
-    return Token(
-        access_token=access_token,
-        token_type="bearer",
-        role=user.role,
-        user_id=user_id
-    )
 
 
 @router.post("/login", response_model=Token)
 async def login(credentials: UserLogin):
     """Login user and return JWT token"""
     
-    # Find user by email
-    user = await db.users.find_one({"email": credentials.email})
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
+    try:
+        # Find user by email
+        user = await db.users.find_one({"email": credentials.email})
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Verify password
+        if not verify_password(credentials.password, user["password"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Create access token
+        user_id = str(user["_id"])
+        access_token = create_access_token(
+            data={"sub": user_id, "role": user["role"]}
+        )
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            role=user["role"],
+            user_id=user_id
         )
     
-    # Verify password
-    if not verify_password(credentials.password, user["password"]):
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Login error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {str(e)}"
         )
-    
-    # Create access token
-    user_id = str(user["_id"])
-    access_token = create_access_token(
-        data={"sub": user_id, "role": user["role"]}
-    )
-    
-    return Token(
-        access_token=access_token,
-        token_type="bearer",
-        role=user["role"],
-        user_id=user_id
-    )
 
 
 @router.get("/me")
 async def get_current_user_info():
     """Get current user information (requires authentication)"""
-    # This would normally require authentication middleware
-    # For now, it's a placeholder
     return {"message": "This endpoint requires authentication"}
