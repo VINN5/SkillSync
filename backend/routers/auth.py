@@ -11,10 +11,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# JWT Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+# JWT Configuration - USE SAME VALUES AS utils/auth.py
+SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key")  # ← Changed to match utils
+ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))
 
 
 # ────────────────────────────────────────────────
@@ -156,6 +156,8 @@ async def register(user: UserRegister):
         raise
     except Exception as e:
         print(f"Registration error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}"
@@ -167,25 +169,46 @@ async def login(credentials: UserLogin):
     """Login user and return JWT token"""
     
     try:
+        print(f"🔍 Login attempt for email: {credentials.email}")
+        
         # Get database instance
         db = database.db
         if db is None:
+            print("❌ Database is None!")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Database connection not available"
             )
         
+        print(f"✅ Database connected")
+        
         # Find user by email
         user = await db.users.find_one({"email": credentials.email})
         
         if not user:
+            print(f"❌ User not found: {credentials.email}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password"
             )
         
+        print(f"✅ User found: {user.get('name')} ({user.get('role')})")
+        print(f"🔐 User has password field: {'password' in user}")
+        
+        # Check if password field exists
+        if "password" not in user:
+            print(f"❌ User {credentials.email} has no password field!")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="User data is corrupted. Please register again."
+            )
+        
         # Verify password
-        if not verify_password(credentials.password, user["password"]):
+        password_valid = verify_password(credentials.password, user["password"])
+        print(f"🔐 Password verification: {password_valid}")
+        
+        if not password_valid:
+            print(f"❌ Invalid password for {credentials.email}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password"
@@ -197,6 +220,8 @@ async def login(credentials: UserLogin):
             data={"sub": user_id, "role": user["role"]}
         )
         
+        print(f"✅ Login successful for {credentials.email}")
+        
         return Token(
             access_token=access_token,
             token_type="bearer",
@@ -207,7 +232,9 @@ async def login(credentials: UserLogin):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Login error: {e}")
+        print(f"❌ Unexpected login error: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}"
@@ -256,6 +283,7 @@ async def delete_all_users():
     
     except Exception as e:
         return {"error": str(e)}
+
 
 @router.get("/me")
 async def get_current_user_info():
